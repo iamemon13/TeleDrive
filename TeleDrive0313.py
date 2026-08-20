@@ -2,7 +2,7 @@
 TeleDrive Organizer Bot (Telegram Only)
 ----------------------------------------
 Developer: iamemon13
-Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Encryption, Delete Command, Sequential Backup & Extra Chat Forwarding
+Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Encryption, Delete Command, Sequential Backup & Topic-based Extra Chat Forwarding
 """
 
 import asyncio
@@ -36,11 +36,18 @@ CHANNEL_ID = int(os.environ["CHANNEL_ID"])
 EX_CHAT_ID = int(os.environ["EX_CHAT_ID"])  # অতিরিক্ত চ্যাট বা গ্রুপ আইডি
 BACKUP_CHANNEL_ID = int(os.environ["BACKUP_CHANNEL_ID"])
 
-# টপিক আইডিগুলো এখন পরিবেশগত ভেরিয়েবল থেকে রিড করবে
+# মূল গ্রুপের টপিক আইডিগুলো
 TOPIC_IDS = {
     "photo": int(os.environ["TOPIC_PHOTO"]),      # 📷 Photos topic id
     "video": int(os.environ["TOPIC_VIDEO"]),      # 🎥 Videos topic id
     "document": int(os.environ["TOPIC_DOCUMENT"]),  # 📄 Documents topic id
+}
+
+# অতিরিক্ত গ্রুপের (EX_CHAT_ID) টপিক আইডিগুলো
+EX_TOPIC_IDS = {
+    "photo": int(os.environ["EX_TOPIC_PHOTO"]),
+    "video": int(os.environ["EX_TOPIC_VIDEO"]),
+    "document": int(os.environ["EX_TOPIC_DOCUMENT"]),
 }
 
 BD_TIMEZONE = ZoneInfo("Asia/Dhaka")
@@ -292,6 +299,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     current_thread = message.message_thread_id
     target_thread = TOPIC_IDS.get(file_type, TOPIC_IDS["document"])
+    target_ex_thread = EX_TOPIC_IDS.get(file_type, EX_TOPIC_IDS["document"])
     
     saved_message_id = message.message_id
     new_caption = (message.caption or "") + f"\n\n#{file_type} #TeleDrive"
@@ -311,21 +319,24 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     channel_msg_id = None
     try:
-        # মূল চ্যানেল এবং অতিরিক্ত চ্যাটে ইনস্ট্যান্ট সেন্ড করা
+        # মূল চ্যানেলে পাঠানো
         if message.photo:
             sent_channel_msg = await context.bot.send_photo(chat_id=CHANNEL_ID, photo=file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
-            await context.bot.send_photo(chat_id=EX_CHAT_ID, photo=file_id, caption=new_caption)
-            
         elif message.video:
             sent_channel_msg = await context.bot.send_video(chat_id=CHANNEL_ID, video=file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
-            await context.bot.send_video(chat_id=EX_CHAT_ID, video=file_id, caption=new_caption)
-            
         elif message.document:
             sent_channel_msg = await context.bot.send_document(chat_id=CHANNEL_ID, document=file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
-            await context.bot.send_document(chat_id=EX_CHAT_ID, document=file_id, caption=new_caption)
+
+        # অতিরিক্ত গ্রুপে (EX_CHAT_ID) টপিক অনুযায়ী পাঠানো
+        if message.photo:
+            await context.bot.send_photo(chat_id=EX_CHAT_ID, photo=file_id, caption=new_caption, message_thread_id=target_ex_thread)
+        elif message.video:
+            await context.bot.send_video(chat_id=EX_CHAT_ID, video=file_id, caption=new_caption, message_thread_id=target_ex_thread)
+        elif message.document:
+            await context.bot.send_document(chat_id=EX_CHAT_ID, document=file_id, caption=new_caption, message_thread_id=target_ex_thread)
         
         save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, channel_msg_id, file_unique_id)
     except Exception as e:
@@ -360,3 +371,4 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
+    
