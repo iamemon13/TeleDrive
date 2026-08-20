@@ -2,7 +2,7 @@
 TeleDrive Organizer Bot (Telegram Only)
 ----------------------------------------
 Developer: iamemon13
-Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Encryption, Delete Command & Sequential Backup
+Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Encryption, Delete Command, Sequential Backup & Extra Chat Forwarding
 """
 
 import asyncio
@@ -33,6 +33,7 @@ MONGO_URI = os.environ["MONGO_URI"]
 
 GROUP_ID = int(os.environ["GROUP_ID"])
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
+EX_CHAT_ID = int(os.environ["EX_CHAT_ID"])  # অতিরিক্ত চ্যাট বা গ্রুপ আইডি
 BACKUP_CHANNEL_ID = int(os.environ["BACKUP_CHANNEL_ID"])
 
 # টপিক আইডিগুলো এখন পরিবেশগত ভেরিয়েবল থেকে রিড করবে
@@ -310,19 +311,25 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     channel_msg_id = None
     try:
+        # মূল চ্যানেল এবং অতিরিক্ত চ্যাটে ইনস্ট্যান্ট সেন্ড করা
         if message.photo:
             sent_channel_msg = await context.bot.send_photo(chat_id=CHANNEL_ID, photo=file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
+            await context.bot.send_photo(chat_id=EX_CHAT_ID, photo=file_id, caption=new_caption)
+            
         elif message.video:
             sent_channel_msg = await context.bot.send_video(chat_id=CHANNEL_ID, video=file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
+            await context.bot.send_video(chat_id=EX_CHAT_ID, video=file_id, caption=new_caption)
+            
         elif message.document:
             sent_channel_msg = await context.bot.send_document(chat_id=CHANNEL_ID, document=file_id, caption=new_caption)
             channel_msg_id = sent_channel_msg.message_id
+            await context.bot.send_document(chat_id=EX_CHAT_ID, document=file_id, caption=new_caption)
         
         save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, channel_msg_id, file_unique_id)
     except Exception as e:
-        logger.error(f"Failed to save to backup channel: {e}")
+        logger.error(f"Failed to save to backup/extra channel: {e}")
         save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, file_unique_id=file_unique_id)
 
 # ============ MAIN ============
@@ -353,5 +360,3 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
-
-        
