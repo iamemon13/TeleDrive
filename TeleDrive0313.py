@@ -35,9 +35,9 @@ CHANNEL_ID = int(os.environ["CHANNEL_ID"])
 BACKUP_CHANNEL_ID = int(os.environ["BACKUP_CHANNEL_ID"])
 
 TOPIC_IDS = {
-    "photo": 6,      # 📷 Photos topic id
-    "video": 7,      # 🎥 Videos topic id
-    "document": 12,  # 📄 Documents topic id
+    "photo": 4,      # 📷 Photos topic id
+    "video": 3,      # 🎥 Videos topic id
+    "document": 5,  # 📄 Documents topic id
 }
 
 # ============ RENDER KEEP ALIVE SERVER ============
