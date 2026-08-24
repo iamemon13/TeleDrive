@@ -1,8 +1,8 @@
 """
-TeleDrive Organizer Bot (Telegram Only)
-----------------------------------------
+TeleDrive Organizer Bot (Telegram Only) - 2nd Bot
+--------------------------------------------------
 Developer: iamemon13
-Features: Multi-topic, MongoDB, Inline Search, Duplicate Check, Encryption, Delete Command, Sequential Backup & Topic-based Extra Chat Forwarding
+Features: Multi-topic, MongoDB, Inline Search, Enhanced Duplicate Check, HEIC & Expanded File Type Support, Encryption, Delete Command, Sequential Backup & Topic-based Extra Chat Forwarding
 """
 
 import asyncio
@@ -58,7 +58,7 @@ app_flask = Flask('')
 
 @app_flask.route('/')
 def home():
-    return "TeleDrive Bot is running alive!"
+    return "TeleDrive Bot (2nd Instance) is running alive!"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
@@ -157,7 +157,7 @@ async def weekly_backup_job(context: ContextTypes.DEFAULT_TYPE):
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(
-            "TeleDrive Bot (Developed by @iamemon13) চালু আছে ✅\n\n"
+            "TeleDrive Bot (Developed by @iamemon13) चालू আছে ✅\n\n"
             "📌 কমান্ডসমূহ:\n"
             "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
             "• /stats - ড্রাইভের মোট ফাইলের হিসেব দেখুন\n"
@@ -271,7 +271,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_unique_id = message.photo[-1].file_unique_id
     elif message.video:
         file_type = "video"
-        file_name = f"video_{message.message_id}.mp4"
+        file_name = message.video.file_name or f"video_{message.message_id}.mp4"
         file_id = message.video.file_id
         file_unique_id = message.video.file_unique_id
     elif message.document:
@@ -280,22 +280,35 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_unique_id = message.document.file_unique_id
         ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
         
-        if ext in ['jpg', 'jpeg', 'png', 'webp']:
+        # HEIC সহ বর্ধিত ফাইল এক্সটেনশন ফরম্যাট
+        image_exts = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'bmp', 'tiff', 'gif', 'svg']
+        video_exts = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'wmv', '3gp', 'm4v']
+
+        if ext in image_exts:
             file_type = "photo"
-        elif ext in ['mp4', 'mkv', 'mov', 'avi', 'webm']:
+        elif ext in video_exts:
             file_type = "video"
         else:
             file_type = "document"
 
-    # ডুপ্লিকেট চেক (যদি file_unique_id আগে থেকেই ডাটাবেসে থাকে)
-    if file_unique_id:
-        existing_file = files_col.find_one({"file_unique_id": file_unique_id})
-        if existing_file:
-            try:
-                await message.delete()
-            except Exception:
-                pass
-            return
+    # ============ ENHANCED DUPLICATE CHECK ============
+    is_duplicate = False
+    
+    # ১. file_unique_id দিয়ে চেক
+    if file_unique_id and files_col.find_one({"file_unique_id": file_unique_id}):
+        is_duplicate = True
+
+    # ২. ফাইলের নাম এবং ফাইল টাইপ দিয়ে ডুপ্লিকেট চেক (ম্যানুয়াল রি-আপলোডের ক্ষেত্রে)
+    if not is_duplicate and file_name and file_name not in ["document", ""] and not file_name.startswith("photo_"):
+        if files_col.find_one({"file_name": file_name, "file_type": file_type}):
+            is_duplicate = True
+
+    if is_duplicate:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        return
 
     current_thread = message.message_thread_id
     target_thread = TOPIC_IDS.get(file_type, TOPIC_IDS["document"])
@@ -362,7 +375,7 @@ async def main_async():
     if app.job_queue:
         app.job_queue.run_repeating(weekly_backup_job, interval=604800, first=15)
 
-    print("TeleDrive Bot with universal file routing is running...")
+    print("TeleDrive Bot (2nd Instance) with extra chat routing is running...")
     async with app:
         await app.initialize()
         await app.start()
