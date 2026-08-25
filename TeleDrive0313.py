@@ -2,7 +2,7 @@
 TeleDrive Organizer Bot (Telegram Only) - 2nd Bot
 --------------------------------------------------
 Developer: iamemon13
-Features: Multi-topic, MongoDB, Inline Search, Enhanced Duplicate Check, HEIC & Expanded File Type Support, Encryption, Delete Command, Sequential Backup, Topic-based Extra Chat Forwarding & Purge Command
+Features: Multi-topic, MongoDB, Inline Search, Enhanced Duplicate Check, HEIC & Expanded File Type Support, Encryption, Delete Command, Sequential Backup, Topic-based Extra Chat Forwarding & Purge Command (Group & Channel Enabled)
 """
 
 import asyncio
@@ -182,8 +182,9 @@ async def weekly_backup_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message:
-        await update.message.reply_text(
+    target = update.effective_message
+    if target:
+        await target.reply_text(
             "TeleDrive Bot (Developed by @iamemon13) চালু আছে ✅\n\n"
             "📌 কমান্ডসমূহ:\n"
             "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
@@ -198,13 +199,14 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
+    target = update.effective_message
+    if not target:
         return
     total_files = files_col.count_documents({})
     photos = files_col.count_documents({"file_type": "photo"})
     videos = files_col.count_documents({"file_type": "video"})
     documents = files_col.count_documents({"file_type": "document"})
-    await update.message.reply_text(
+    await target.reply_text(
         f"📊 **TeleDrive Storage Statistics**\n\n"
         f"📷 Photos: {photos}\n"
         f"🎥 Videos: {videos}\n"
@@ -218,16 +220,17 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def backup_now_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    if not update.message:
+    target = update.effective_message
+    if not target:
         return
-    await update.message.reply_text("🔄 ধারাবাহিক ব্যাকআপ প্রক্রিয়া শুরু হচ্ছে...")
+    await target.reply_text("🔄 ধারাবাহিক ব্যাকআপ প্রক্রিয়া শুরু হচ্ছে...")
     count = await perform_sequential_backup(context.bot)
     if count > 0:
-        await update.message.reply_text(
+        await target.reply_text(
             f"✅ ব্যাকআপ সফল! মোট {count} টি নতুন ফাইল পর্যায়ক্রমে ফরোয়ার্ড করা হয়েছে।"
         )
     else:
-        await update.message.reply_text(
+        await target.reply_text(
             "ℹ️ ব্যাকআপ করার মতো নতুন কোনো ফাইল বাকি নেই, সব আপলোড করা আছে!"
         )
 
@@ -235,122 +238,126 @@ async def backup_now_command(
 async def delete_record_command(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ):
-    if not update.message or not update.message.reply_to_message:
-        await update.message.reply_text(
-            "⚠️ যে ফাইলটি ডাটাবেস থেকে মুছতে চান, সেই মেসেজটিতে রিপ্লাই দিয়ে `/delete` লিখুন।"
-        )
+    target = update.effective_message
+    if not target or not target.reply_to_message:
+        if target:
+            await target.reply_text(
+                "⚠️ যে ফাইলটি ডাটাবেস থেকে মুছতে চান, সেই মেসেজটিতে রিপ্লাই দিয়ে `/delete` লিখুন।"
+            )
         return
 
-    replied_msg_id = update.message.reply_to_message.message_id
+    replied_msg_id = target.reply_to_message.message_id
     result = files_col.delete_one({"message_id": replied_msg_id})
 
     if result.deleted_count > 0:
-        await update.message.reply_text(
+        await target.reply_text(
             "✅ ফাইলটি ডাটাবেস থেকে সফলভাবে মুছে ফেলা হয়েছে!"
         )
     else:
-        await update.message.reply_text(
+        await target.reply_text(
             "⚠️ এই ফাইলটির কোনো রেকর্ড ডাটাবেসে পাওয়া যায়নি।"
         )
 
 
-# ============ NEW PURGE / BULK DELETE COMMAND ============
+# ============ CHANNEL & GROUP ENABLED PURGE COMMAND ============
 async def purge_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    ব্যবহার:
-    /purge -> বর্তমান চ্যাট/গ্রুপের সর্ব শেষ ১০০টি মেসেজ ডিলিট করবে।
-    /purge 50 -> বর্তমান চ্যাটের শেষ ৫০টি মেসেজ ডিলিট করবে।
-    """
     message = update.effective_message
-    if not message:
+    chat_id = update.effective_chat.id if update.effective_chat else None
+
+    if not message or not chat_id:
         return
 
-    # অপশনাল লিমিট (ডিফল্ট ১০০, সর্বোচ্চ ৫০০)
     limit = 100
     if context.args and context.args[0].isdigit():
         limit = min(int(context.args[0]), 500)
 
-    status_msg = await message.reply_text(
-        f"⏳ মেসেজ ডিলিট প্রক্রিয়া শুরু হচ্ছে (সর্বোচ্চ {limit} টি)..."
+    status_msg = await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"⏳ মেসেজ ডিলিট প্রক্রিয়া শুরু হচ্ছে (সর্বোচ্চ {limit} টি)...",
     )
 
     current_msg_id = message.message_id
     deleted_count = 0
     batch = []
 
-    # পিছনের দিকে লুপ চালিয়ে মেসেজ আইডি একের পর এক ডিলিট করার চেষ্টা
-    for msg_id in range(current_msg_id, current_msg_id - limit, -1):
+    for msg_id in range(current_msg_id, max(1, current_msg_id - limit), -1):
         if msg_id == status_msg.message_id:
             continue
         batch.append(msg_id)
 
-        # Telegram API একবারে ১০০টি আইডি ডিলিট করার অনুমতি দেয়
         if len(batch) == 100:
             try:
                 await context.bot.delete_messages(
-                    chat_id=message.chat_id, message_ids=batch
+                    chat_id=chat_id, message_ids=batch
                 )
                 deleted_count += len(batch)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Purge batch delete error: {e}")
             batch = []
 
     if batch:
         try:
             await context.bot.delete_messages(
-                chat_id=message.chat_id, message_ids=batch
+                chat_id=chat_id, message_ids=batch
             )
             deleted_count += len(batch)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Purge final batch delete error: {e}")
 
-    # ডাটাবেস থেকেও মুছে ফেলা (ঐচ্ছিক)
     files_col.delete_many({})
 
-    await status_msg.edit_text(
-        f"🗑️ সফলভাবে {deleted_count} টি মেসেজ এবং ডাটাবেস মুছে ফেলা হয়েছে!"
-    )
+    try:
+        await status_msg.edit_text(
+            f"🗑️ সফলভাবে {deleted_count} টি মেসেজ এবং ডাটাবেস রেকর্ড মুছে ফেলা হয়েছে!"
+        )
+    except Exception:
+        pass
 
 
 async def encrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or len(context.args) < 2:
-        await update.message.reply_text(
-            "ব্যবহার: /encrypt <পাসওয়ার্ড> <আপনার টেক্সট>"
-        )
+    target = update.effective_message
+    if not target or len(context.args) < 2:
+        if target:
+            await target.reply_text(
+                "ব্যবহার: /encrypt <পাসওয়ার্ড> <আপনার টেক্সট>"
+            )
         return
     key, raw_text = context.args[0], " ".join(context.args[1:])
-    await update.message.reply_text(
+    await target.reply_text(
         f"🔐 **Encrypted:**\n`{cipher_text(raw_text, key)}`", parse_mode="Markdown"
     )
 
 
 async def decrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or len(context.args) < 2:
-        await update.message.reply_text(
-            "ব্যবহার: /decrypt <পাসওয়ার্ড> <লক করা টেক্সট>"
-        )
+    target = update.effective_message
+    if not target or len(context.args) < 2:
+        if target:
+            await target.reply_text(
+                "ব্যবহার: /decrypt <পাসওয়ার্ড> <লক করা টেক্সট>"
+            )
         return
     key, ciphered_text = context.args[0], " ".join(context.args[1:])
-    await update.message.reply_text(
+    await target.reply_text(
         f"🔓 **Decrypted:**\n{cipher_text(ciphered_text, key, decrypt=True)}"
     )
 
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message:
+    target = update.effective_message
+    if not target:
         return
     if not context.args:
-        await update.message.reply_text("ব্যবহার: /search <কিওয়ার্ড>")
+        await target.reply_text("ব্যবহার: /search <কিওয়ার্ড>")
         return
     keyword = " ".join(context.args)
     results = search_files(keyword)
     if not results:
-        await update.message.reply_text(f"'{keyword}' দিয়ে কিছু পাওয়া যায়নি।")
+        await target.reply_text(f"'{keyword}' দিয়ে কিছু পাওয়া যায়নি।")
         return
     lines = [f"🔍 '{keyword}' এর জন্য রেজাল্ট:\n"]
     for item in results:
         lines.append(f"• [{item.get('file_type')}] {item.get('file_name')}")
-    await update.message.reply_text("\n".join(lines))
+    await target.reply_text("\n".join(lines))
 
 
 async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -373,7 +380,8 @@ async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
-    if message is None or message.chat_id != GROUP_ID:
+    # গ্রুপ এবং চ্যানেল উভয় চ্যাটকেই অ্যালাউ করা হলো
+    if message is None or message.chat_id not in [GROUP_ID, CHANNEL_ID]:
         return
 
     if message.from_user and message.from_user.is_bot:
@@ -464,7 +472,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     saved_message_id = message.message_id
     new_caption = (message.caption or "") + f"\n\n#{file_type} #TeleDrive"
 
-    if current_thread != target_thread:
+    if current_thread != target_thread and message.chat_id == GROUP_ID:
         try:
             copied = await context.bot.copy_message(
                 chat_id=GROUP_ID,
@@ -479,21 +487,22 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     channel_msg_id = None
     try:
-        if message.photo:
-            sent_channel_msg = await context.bot.send_photo(
-                chat_id=CHANNEL_ID, photo=file_id, caption=new_caption
-            )
-            channel_msg_id = sent_channel_msg.message_id
-        elif message.video:
-            sent_channel_msg = await context.bot.send_video(
-                chat_id=CHANNEL_ID, video=file_id, caption=new_caption
-            )
-            channel_msg_id = sent_channel_msg.message_id
-        elif message.document:
-            sent_channel_msg = await context.bot.send_document(
-                chat_id=CHANNEL_ID, document=file_id, caption=new_caption
-            )
-            channel_msg_id = sent_channel_msg.message_id
+        if message.chat_id != CHANNEL_ID:
+            if message.photo:
+                sent_channel_msg = await context.bot.send_photo(
+                    chat_id=CHANNEL_ID, photo=file_id, caption=new_caption
+                )
+                channel_msg_id = sent_channel_msg.message_id
+            elif message.video:
+                sent_channel_msg = await context.bot.send_video(
+                    chat_id=CHANNEL_ID, video=file_id, caption=new_caption
+                )
+                channel_msg_id = sent_channel_msg.message_id
+            elif message.document:
+                sent_channel_msg = await context.bot.send_document(
+                    chat_id=CHANNEL_ID, document=file_id, caption=new_caption
+                )
+                channel_msg_id = sent_channel_msg.message_id
 
         if message.photo:
             await context.bot.send_photo(
@@ -545,20 +554,35 @@ async def main_async():
     keep_alive()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("search", search_command))
-    app.add_handler(CommandHandler("stats", stats_command))
-    app.add_handler(CommandHandler("backup_now", backup_now_command))
-    app.add_handler(CommandHandler("delete", delete_record_command))
-    app.add_handler(CommandHandler("purge", purge_command))  # নতুন কমান্ড যুক্ত করা হলো
-    app.add_handler(CommandHandler("encrypt", encrypt_command))
-    app.add_handler(CommandHandler("decrypt", decrypt_command))
-    app.add_handler(InlineQueryHandler(inline_search))
-    app.add_handler(
-        MessageHandler(
-            filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_file
-        )
+    # চ্যানেল এবং গ্রুপ উভয় পোস্ট রিড করার জন্য কম্বাইন্ড ফিল্টার
+    cmd_filter = filters.COMMAND | (
+        filters.COMMAND & filters.ChatType.CHANNEL
     )
+
+    app.add_handler(CommandHandler("start", start_command, filters=cmd_filter))
+    app.add_handler(CommandHandler("search", search_command, filters=cmd_filter))
+    app.add_handler(CommandHandler("stats", stats_command, filters=cmd_filter))
+    app.add_handler(
+        CommandHandler("backup_now", backup_now_command, filters=cmd_filter)
+    )
+    app.add_handler(
+        CommandHandler("delete", delete_record_command, filters=cmd_filter)
+    )
+    app.add_handler(CommandHandler("purge", purge_command, filters=cmd_filter))
+    app.add_handler(CommandHandler("encrypt", encrypt_command, filters=cmd_filter))
+    app.add_handler(CommandHandler("decrypt", decrypt_command, filters=cmd_filter))
+
+    app.add_handler(InlineQueryHandler(inline_search))
+
+    # মিডিয়া ফিল্টারেও চ্যানেল পোস্ট সাপোর্ট দেওয়া হয়েছে
+    media_filter = (
+        filters.PHOTO | filters.VIDEO | filters.Document.ALL
+    ) | (
+        (filters.PHOTO | filters.VIDEO | filters.Document.ALL)
+        & filters.ChatType.CHANNEL
+    )
+
+    app.add_handler(MessageHandler(media_filter, handle_file))
 
     if app.job_queue:
         app.job_queue.run_repeating(weekly_backup_job, interval=604800, first=15)
@@ -573,4 +597,4 @@ async def main_async():
 
 if __name__ == "__main__":
     asyncio.run(main_async())
-        
+    
