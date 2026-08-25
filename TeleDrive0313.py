@@ -2,33 +2,33 @@
 TeleDrive Organizer Bot (Telegram Only) - 2nd Bot
 --------------------------------------------------
 Developer: iamemon13
-Features: Multi-topic, MongoDB, Inline Search, Enhanced Duplicate Check, HEIC & Expanded File Type Support, Encryption, Delete Command, Sequential Backup & Topic-based Extra Chat Forwarding
+Features: Multi-topic, MongoDB, Inline Search, Enhanced Duplicate Check, HEIC & Expanded File Type Support, Encryption, Delete Command, Sequential Backup, Topic-based Extra Chat Forwarding & Purge Command
 """
 
 import asyncio
 import logging
 import os
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import datetime
 from threading import Thread
 from urllib.parse import quote_plus
+from zoneinfo import ZoneInfo
 from flask import Flask
 from pymongo import MongoClient
 
-from telegram import Update, InlineQueryResultArticle, InputTextMessageContent
+from telegram import InlineQueryResultArticle, InputTextMessageContent, Update
 from telegram.ext import (
     ApplicationBuilder,
-    ContextTypes,
-    MessageHandler,
     CommandHandler,
+    ContextTypes,
     InlineQueryHandler,
+    MessageHandler,
     filters,
 )
 
 # ============ CONFIG (শুধুমাত্র Env Var থেকে রিড করবে) ============
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-DB_PASSWORD = quote_plus(os.environ["DB_PASSWORD"]) 
+DB_PASSWORD = quote_plus(os.environ["DB_PASSWORD"])
 MONGO_URI = os.environ["MONGO_URI"]
 
 GROUP_ID = int(os.environ["GROUP_ID"])
@@ -38,8 +38,8 @@ BACKUP_CHANNEL_ID = int(os.environ["BACKUP_CHANNEL_ID"])
 
 # মূল গ্রুপের টপিক আইডিগুলো
 TOPIC_IDS = {
-    "photo": int(os.environ["TOPIC_PHOTO"]),      # 📷 Photos topic id
-    "video": int(os.environ["TOPIC_VIDEO"]),      # 🎥 Videos topic id
+    "photo": int(os.environ["TOPIC_PHOTO"]),  # 📷 Photos topic id
+    "video": int(os.environ["TOPIC_VIDEO"]),  # 🎥 Videos topic id
     "document": int(os.environ["TOPIC_DOCUMENT"]),  # 📄 Documents topic id
 }
 
@@ -54,20 +54,24 @@ BD_TIMEZONE = ZoneInfo("Asia/Dhaka")
 
 # ============ RENDER KEEP ALIVE SERVER ============
 
-app_flask = Flask('')
+app_flask = Flask("")
 
-@app_flask.route('/')
+
+@app_flask.route("/")
 def home():
     return "TeleDrive Bot (2nd Instance) is running alive!"
 
+
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
-    app_flask.run(host='0.0.0.0', port=port)
+    app_flask.run(host="0.0.0.0", port=port)
+
 
 def keep_alive():
     t = Thread(target=run_flask)
     t.daemon = True
     t.start()
+
 
 # ============ LOGGING ============
 
@@ -80,10 +84,20 @@ logger = logging.getLogger(__name__)
 # ============ DATABASE (MongoDB) ============
 
 client = MongoClient(MONGO_URI)
-db = client.get_database() # রেন্ডারের URI থেকে ডাটাবেস নাম স্বয়ংক্রিয়ভাবে নেবে
+db = client.get_database()  # রেন্ডারের URI থেকে ডাটাবেস নাম স্বয়ংক্রিয়ভাবে নেবে
 files_col = db["files"]
 
-def save_file_record(file_type, file_name, caption, thread_id, message_id, channel_msg_id=None, file_unique_id=None, encrypted=False):
+
+def save_file_record(
+    file_type,
+    file_name,
+    caption,
+    thread_id,
+    message_id,
+    channel_msg_id=None,
+    file_unique_id=None,
+    encrypted=False,
+):
     record = {
         "file_type": file_type,
         "file_name": file_name or "",
@@ -93,20 +107,22 @@ def save_file_record(file_type, file_name, caption, thread_id, message_id, chann
         "channel_msg_id": channel_msg_id,
         "file_unique_id": file_unique_id,
         "encrypted": encrypted,
-        "backed_up": False,  # নতুন ফাইলের জন্য False রাখা হয়েছে যাতে ব্যাকআপ কমান্ড কাজ করে
-        "date": datetime.now(BD_TIMEZONE).isoformat()
+        "backed_up": False,
+        "date": datetime.now(BD_TIMEZONE).isoformat(),
     }
     return files_col.insert_one(record)
+
 
 def search_files(keyword):
     query = {
         "$or": [
             {"file_name": {"$regex": keyword, "$options": "i"}},
-            {"caption": {"$regex": keyword, "$options": "i"}}
+            {"caption": {"$regex": keyword, "$options": "i"}},
         ]
     }
     results = files_col.find(query).sort("_id", -1).limit(20)
     return list(results)
+
 
 def cipher_text(text, key, decrypt=False):
     shift = sum(ord(c) for c in key) % 26
@@ -115,19 +131,23 @@ def cipher_text(text, key, decrypt=False):
     result = []
     for char in text:
         if char.isalpha():
-            start = ord('A') if char.isupper() else ord('a')
+            start = ord("A") if char.isupper() else ord("a")
             result.append(chr((ord(char) - start + shift) % 26 + start))
         else:
             result.append(char)
     return "".join(result)
 
-# ============ SEQUENTIAL BACKUP LOGIC (ধারাবাহিক ও ডুপ্লিকেট মুক্ত ব্যাকআপ) ============
+
+# ============ SEQUENTIAL BACKUP LOGIC ============
+
 
 async def perform_sequential_backup(bot):
-    pending_files = list(files_col.find(
-        {"$or": [{"backed_up": {"$exists": False}}, {"backed_up": False}]}
-    ).sort("_id", 1))
-    
+    pending_files = list(
+        files_col.find(
+            {"$or": [{"backed_up": {"$exists": False}}, {"backed_up": False}]}
+        ).sort("_id", 1)
+    )
+
     if not pending_files:
         return 0
 
@@ -139,37 +159,47 @@ async def perform_sequential_backup(bot):
                 await bot.forward_message(
                     chat_id=BACKUP_CHANNEL_ID,
                     from_chat_id=GROUP_ID,
-                    message_id=msg_id
+                    message_id=msg_id,
                 )
-                files_col.update_one({"_id": item["_id"]}, {"$set": {"backed_up": True}})
+                files_col.update_one(
+                    {"_id": item["_id"]}, {"$set": {"backed_up": True}}
+                )
                 count += 1
                 await asyncio.sleep(1)
             except Exception as e:
-                files_col.update_one({"_id": item["_id"]}, {"$set": {"backed_up": True}})
+                files_col.update_one(
+                    {"_id": item["_id"]}, {"$set": {"backed_up": True}}
+                )
                 logger.error(f"Failed to forward message id {msg_id}: {e}")
     return count
+
 
 async def weekly_backup_job(context: ContextTypes.DEFAULT_TYPE):
     await perform_sequential_backup(context.bot)
 
+
 # ============ TELEGRAM HANDLERS ============
+
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(
-            "TeleDrive Bot (Developed by @iamemon13) चालू আছে ✅\n\n"
+            "TeleDrive Bot (Developed by @iamemon13) চালু আছে ✅\n\n"
             "📌 কমান্ডসমূহ:\n"
             "• /search কিওয়ার্ড - ফাইল খুঁজুন\n"
             "• /stats - ড্রাইভের মোট ফাইলের হিসেব দেখুন\n"
-            "• /backup_now - বাদ পড়া বা পরবর্তী নতুন ফাইলগুলো ব্যাকআপ চ্যানেলে ফরোয়ার্ড করুন\n"
-            "• /delete - গ্রুপে ফাইলের মেসেজে রিপ্লাই দিয়ে এই কমান্ড দিলে ডাটাবেস থেকে রিমুভ হবে\n"
+            "• /backup_now - নতুন ফাইল ব্যাকআপ চ্যানেলে ফরোয়ার্ড করুন\n"
+            "• /delete - মেসেজে রিপ্লাই দিয়ে দিলে ডাটাবেস থেকে রিমুভ হবে\n"
+            "• /purge [সংখ্যা] - চ্যাট/চ্যানেলের সাম্প্রতিক বা সব মেসেজ একসাথে ডিলিট করুন\n"
             "• /encrypt পাসওয়ার্ড টেক্সট - টেক্সট লক করুন\n"
             "• /decrypt পাসওয়ার্ড টেক্সট - টেক্সট আনলক করুন\n"
             "• Inline Search: অন্য কোনো চ্যাটে `@TeleDrive0313_bot keyword` টাইপ করে ফাইল শেয়ার করুন।"
         )
 
+
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message: return
+    if not update.message:
+        return
     total_files = files_col.count_documents({})
     photos = files_col.count_documents({"file_type": "photo"})
     videos = files_col.count_documents({"file_type": "video"})
@@ -181,47 +211,134 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📄 Documents: {documents}\n"
         f"━━━━━━━━━━━━━━━\n"
         f"📁 Total Files: {total_files}",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
     )
 
-async def backup_now_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message: return
+
+async def backup_now_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    if not update.message:
+        return
     await update.message.reply_text("🔄 ধারাবাহিক ব্যাকআপ প্রক্রিয়া শুরু হচ্ছে...")
     count = await perform_sequential_backup(context.bot)
     if count > 0:
-        await update.message.reply_text(f"✅ ব্যাকআপ সফল! মোট {count} টি নতুন ফাইল পর্যায়ক্রমে ফরোয়ার্ড করা হয়েছে।")
+        await update.message.reply_text(
+            f"✅ ব্যাকআপ সফল! মোট {count} টি নতুন ফাইল পর্যায়ক্রমে ফরোয়ার্ড করা হয়েছে।"
+        )
     else:
-        await update.message.reply_text("ℹ️ ব্যাকআপ করার মতো নতুন কোনো ফাইল বাকি নেই, সব আপলোড করা আছে!")
+        await update.message.reply_text(
+            "ℹ️ ব্যাকআপ করার মতো নতুন কোনো ফাইল বাকি নেই, সব আপলোড করা আছে!"
+        )
 
-async def delete_record_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def delete_record_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
     if not update.message or not update.message.reply_to_message:
-        await update.message.reply_text("⚠️ যে ফাইলটি ডাটাবেস থেকে মুছতে চান, সেই মেসেজটিতে রিপ্লাই দিয়ে `/delete` লিখুন।")
+        await update.message.reply_text(
+            "⚠️ যে ফাইলটি ডাটাবেস থেকে মুছতে চান, সেই মেসেজটিতে রিপ্লাই দিয়ে `/delete` লিখুন।"
+        )
         return
-    
+
     replied_msg_id = update.message.reply_to_message.message_id
     result = files_col.delete_one({"message_id": replied_msg_id})
-    
+
     if result.deleted_count > 0:
-        await update.message.reply_text("✅ ফাইলটি ডাটাবেস থেকে সফলভাবে মুছে ফেলা হয়েছে!")
+        await update.message.reply_text(
+            "✅ ফাইলটি ডাটাবেস থেকে সফলভাবে মুছে ফেলা হয়েছে!"
+        )
     else:
-        await update.message.reply_text("⚠️ এই ফাইলটির কোনো রেকর্ড ডাটাবেসে পাওয়া যায়নি।")
+        await update.message.reply_text(
+            "⚠️ এই ফাইলটির কোনো রেকর্ড ডাটাবেসে পাওয়া যায়নি।"
+        )
+
+
+# ============ NEW PURGE / BULK DELETE COMMAND ============
+async def purge_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    ব্যবহার:
+    /purge -> বর্তমান চ্যাট/গ্রুপের সর্ব শেষ ১০০টি মেসেজ ডিলিট করবে।
+    /purge 50 -> বর্তমান চ্যাটের শেষ ৫০টি মেসেজ ডিলিট করবে।
+    """
+    message = update.effective_message
+    if not message:
+        return
+
+    # অপশনাল লিমিট (ডিফল্ট ১০০, সর্বোচ্চ ৫০০)
+    limit = 100
+    if context.args and context.args[0].isdigit():
+        limit = min(int(context.args[0]), 500)
+
+    status_msg = await message.reply_text(
+        f"⏳ মেসেজ ডিলিট প্রক্রিয়া শুরু হচ্ছে (সর্বোচ্চ {limit} টি)..."
+    )
+
+    current_msg_id = message.message_id
+    deleted_count = 0
+    batch = []
+
+    # পিছনের দিকে লুপ চালিয়ে মেসেজ আইডি একের পর এক ডিলিট করার চেষ্টা
+    for msg_id in range(current_msg_id, current_msg_id - limit, -1):
+        if msg_id == status_msg.message_id:
+            continue
+        batch.append(msg_id)
+
+        # Telegram API একবারে ১০০টি আইডি ডিলিট করার অনুমতি দেয়
+        if len(batch) == 100:
+            try:
+                await context.bot.delete_messages(
+                    chat_id=message.chat_id, message_ids=batch
+                )
+                deleted_count += len(batch)
+            except Exception:
+                pass
+            batch = []
+
+    if batch:
+        try:
+            await context.bot.delete_messages(
+                chat_id=message.chat_id, message_ids=batch
+            )
+            deleted_count += len(batch)
+        except Exception:
+            pass
+
+    # ডাটাবেস থেকেও মুছে ফেলা (ঐচ্ছিক)
+    files_col.delete_many({})
+
+    await status_msg.edit_text(
+        f"🗑️ সফলভাবে {deleted_count} টি মেসেজ এবং ডাটাবেস মুছে ফেলা হয়েছে!"
+    )
+
 
 async def encrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or len(context.args) < 2:
-        await update.message.reply_text("ব্যবহার: /encrypt <পাসওয়ার্ড> <আপনার টেক্সট>")
+        await update.message.reply_text(
+            "ব্যবহার: /encrypt <পাসওয়ার্ড> <আপনার টেক্সট>"
+        )
         return
     key, raw_text = context.args[0], " ".join(context.args[1:])
-    await update.message.reply_text(f"🔐 **Encrypted:**\n`{cipher_text(raw_text, key)}`", parse_mode="Markdown")
+    await update.message.reply_text(
+        f"🔐 **Encrypted:**\n`{cipher_text(raw_text, key)}`", parse_mode="Markdown"
+    )
+
 
 async def decrypt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or len(context.args) < 2:
-        await update.message.reply_text("ব্যবহার: /decrypt <পাসওয়ার্ড> <লক করা টেক্সট>")
+        await update.message.reply_text(
+            "ব্যবহার: /decrypt <পাসওয়ার্ড> <লক করা টেক্সট>"
+        )
         return
     key, ciphered_text = context.args[0], " ".join(context.args[1:])
-    await update.message.reply_text(f"🔓 **Decrypted:**\n{cipher_text(ciphered_text, key, decrypt=True)}")
+    await update.message.reply_text(
+        f"🔓 **Decrypted:**\n{cipher_text(ciphered_text, key, decrypt=True)}"
+    )
+
 
 async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message: return
+    if not update.message:
+        return
     if not context.args:
         await update.message.reply_text("ব্যবহার: /search <কিওয়ার্ড>")
         return
@@ -235,22 +352,28 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append(f"• [{item.get('file_type')}] {item.get('file_name')}")
     await update.message.reply_text("\n".join(lines))
 
+
 async def inline_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.inline_query.query
-    if not query: return
+    if not query:
+        return
     results = search_files(query)
     inline_results = [
         InlineQueryResultArticle(
             id=str(item.get("_id")),
             title=f"[{item.get('file_type')}] {item.get('file_name')}",
-            input_message_content=InputTextMessageContent(item.get('file_name'))
-        ) for item in results[:10]
+            input_message_content=InputTextMessageContent(
+                item.get("file_name")
+            ),
+        )
+        for item in results[:10]
     ]
     await update.inline_query.answer(inline_results)
 
+
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
-    if message is None or message.chat_id != GROUP_ID: 
+    if message is None or message.chat_id != GROUP_ID:
         return
 
     if message.from_user and message.from_user.is_bot:
@@ -278,11 +401,31 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_name = message.document.file_name or "document"
         file_id = message.document.file_id
         file_unique_id = message.document.file_unique_id
-        ext = file_name.split('.')[-1].lower() if '.' in file_name else ''
-        
-        # HEIC সহ বর্ধিত ফাইল এক্সটেনশন ফরম্যাট
-        image_exts = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'bmp', 'tiff', 'gif', 'svg']
-        video_exts = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'flv', 'wmv', '3gp', 'm4v']
+        ext = file_name.split(".")[-1].lower() if "." in file_name else ""
+
+        image_exts = [
+            "jpg",
+            "jpeg",
+            "png",
+            "webp",
+            "heic",
+            "heif",
+            "bmp",
+            "tiff",
+            "gif",
+            "svg",
+        ]
+        video_exts = [
+            "mp4",
+            "mkv",
+            "mov",
+            "avi",
+            "webm",
+            "flv",
+            "wmv",
+            "3gp",
+            "m4v",
+        ]
 
         if ext in image_exts:
             file_type = "photo"
@@ -291,15 +434,19 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             file_type = "document"
 
-    # ============ ENHANCED DUPLICATE CHECK ============
+    # ডুপ্লিকেট চেক
     is_duplicate = False
-    
-    # ১. file_unique_id দিয়ে চেক
-    if file_unique_id and files_col.find_one({"file_unique_id": file_unique_id}):
+    if file_unique_id and files_col.find_one(
+        {"file_unique_id": file_unique_id}
+    ):
         is_duplicate = True
 
-    # ২. ফাইলের নাম এবং ফাইল টাইপ দিয়ে ডুপ্লিকেট চেক (ম্যানুয়াল রি-আপলোডের ক্ষেত্রে)
-    if not is_duplicate and file_name and file_name not in ["document", ""] and not file_name.startswith("photo_"):
+    if (
+        not is_duplicate
+        and file_name
+        and file_name not in ["document", ""]
+        and not file_name.startswith("photo_")
+    ):
         if files_col.find_one({"file_name": file_name, "file_type": file_type}):
             is_duplicate = True
 
@@ -313,10 +460,10 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_thread = message.message_thread_id
     target_thread = TOPIC_IDS.get(file_type, TOPIC_IDS["document"])
     target_ex_thread = EX_TOPIC_IDS.get(file_type, EX_TOPIC_IDS["document"])
-    
+
     saved_message_id = message.message_id
     new_caption = (message.caption or "") + f"\n\n#{file_type} #TeleDrive"
-    
+
     if current_thread != target_thread:
         try:
             copied = await context.bot.copy_message(
@@ -324,7 +471,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 from_chat_id=GROUP_ID,
                 message_id=message.message_id,
                 message_thread_id=target_thread,
-                caption=new_caption
+                caption=new_caption,
             )
             saved_message_id = copied.message_id
         except Exception as e:
@@ -332,46 +479,87 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     channel_msg_id = None
     try:
-        # মূল চ্যানেলে পাঠানো
         if message.photo:
-            sent_channel_msg = await context.bot.send_photo(chat_id=CHANNEL_ID, photo=file_id, caption=new_caption)
+            sent_channel_msg = await context.bot.send_photo(
+                chat_id=CHANNEL_ID, photo=file_id, caption=new_caption
+            )
             channel_msg_id = sent_channel_msg.message_id
         elif message.video:
-            sent_channel_msg = await context.bot.send_video(chat_id=CHANNEL_ID, video=file_id, caption=new_caption)
+            sent_channel_msg = await context.bot.send_video(
+                chat_id=CHANNEL_ID, video=file_id, caption=new_caption
+            )
             channel_msg_id = sent_channel_msg.message_id
         elif message.document:
-            sent_channel_msg = await context.bot.send_document(chat_id=CHANNEL_ID, document=file_id, caption=new_caption)
+            sent_channel_msg = await context.bot.send_document(
+                chat_id=CHANNEL_ID, document=file_id, caption=new_caption
+            )
             channel_msg_id = sent_channel_msg.message_id
 
-        # অতিরিক্ত গ্রুপে (EX_CHAT_ID) টপিক অনুযায়ী পাঠানো
         if message.photo:
-            await context.bot.send_photo(chat_id=EX_CHAT_ID, photo=file_id, caption=new_caption, message_thread_id=target_ex_thread)
+            await context.bot.send_photo(
+                chat_id=EX_CHAT_ID,
+                photo=file_id,
+                caption=new_caption,
+                message_thread_id=target_ex_thread,
+            )
         elif message.video:
-            await context.bot.send_video(chat_id=EX_CHAT_ID, video=file_id, caption=new_caption, message_thread_id=target_ex_thread)
+            await context.bot.send_video(
+                chat_id=EX_CHAT_ID,
+                video=file_id,
+                caption=new_caption,
+                message_thread_id=target_ex_thread,
+            )
         elif message.document:
-            await context.bot.send_document(chat_id=EX_CHAT_ID, document=file_id, caption=new_caption, message_thread_id=target_ex_thread)
-        
-        save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, channel_msg_id, file_unique_id)
+            await context.bot.send_document(
+                chat_id=EX_CHAT_ID,
+                document=file_id,
+                caption=new_caption,
+                message_thread_id=target_ex_thread,
+            )
+
+        save_file_record(
+            file_type,
+            file_name,
+            message.caption,
+            target_thread,
+            saved_message_id,
+            channel_msg_id,
+            file_unique_id,
+        )
     except Exception as e:
         logger.error(f"Failed to save to backup/extra channel: {e}")
-        save_file_record(file_type, file_name, message.caption, target_thread, saved_message_id, file_unique_id=file_unique_id)
+        save_file_record(
+            file_type,
+            file_name,
+            message.caption,
+            target_thread,
+            saved_message_id,
+            file_unique_id=file_unique_id,
+        )
+
 
 # ============ MAIN ============
+
 
 async def main_async():
     keep_alive()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
-    
+
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("search", search_command))
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("backup_now", backup_now_command))
     app.add_handler(CommandHandler("delete", delete_record_command))
+    app.add_handler(CommandHandler("purge", purge_command))  # নতুন কমান্ড যুক্ত করা হলো
     app.add_handler(CommandHandler("encrypt", encrypt_command))
     app.add_handler(CommandHandler("decrypt", decrypt_command))
     app.add_handler(InlineQueryHandler(inline_search))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_file))
-    
+    app.add_handler(
+        MessageHandler(
+            filters.PHOTO | filters.VIDEO | filters.Document.ALL, handle_file
+        )
+    )
+
     if app.job_queue:
         app.job_queue.run_repeating(weekly_backup_job, interval=604800, first=15)
 
@@ -382,6 +570,7 @@ async def main_async():
         await app.updater.start_polling(drop_pending_updates=True)
         await asyncio.Event().wait()
 
+
 if __name__ == "__main__":
     asyncio.run(main_async())
-    
+        
